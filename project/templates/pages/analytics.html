@@ -8,12 +8,23 @@
         <h1>销售统计</h1>
     </div>
 </div>
+{% if date_error %}
+<div class="alert alert-danger" role="alert">{{ date_error }}</div>
+{% endif %}
+<form class="form-inline" action="{{ url_for('analytics.index') }}" method="get">
+    <div class="form-group">
+        <label for="sales-date">查询日期</label>
+        <input class="form-control" id="sales-date" name="date" type="date"
+               value="{{ selected_date }}" required>
+    </div>
+    <button class="btn btn-primary" type="submit">查询</button>
+</form>
 <div class="row">
     <div class="col-md-7">
 
         <div class="row">
             <div class="col-sm-4">
-                <h2><small>今日销售总额：</small></h2>
+                <h2><small>所选日期销售总额：</small></h2>
             </div>
             <div class="col-sm-8">
                 <h2>{{gross_sales}}</h2>
@@ -21,7 +32,7 @@
         </div>
         <div class="row">
             <div class="col-sm-4">
-                <h2><small>今日毛利润：</small></h2>
+                <h2><small>所选日期毛利润：</small></h2>
             </div>
             <div class="col-sm-8">
                 <h2>{{profits}}</h2>
@@ -29,19 +40,19 @@
         </div>
     </div>
     <div class="col-md-5">
-        <p><em>统计范围：今日 00:00 至现在，按 24 小时汇总。金额单位：人民币。</em></p>
+        <p><em>统计日期：{{ selected_date }}，按 24 小时汇总。金额单位：人民币。</em></p>
     </div>
 </div>
 <hr>
 <div class="row">
     <div class="col-md-12">
-        <h2>今日销售额（按小时）</h2>
+        <h2>{{ selected_date }} 销售额（按小时）</h2>
         <canvas id="summarySalesChart" width="300" height="100"></canvas>
     </div>
 </div>
 <div class="row">
     <div class="col-md-12">
-        <h2>今日交易笔数（按小时）</h2>
+        <h2>{{ selected_date }} 交易笔数（按小时）</h2>
         <canvas id="summaryCountChart" width="300" height="100"></canvas>
     </div>
 </div>

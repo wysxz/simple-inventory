@@ -312,6 +312,25 @@ class SupplierView(ModelView):
         'notes': '备注',
     }
     column_searchable_list = ('name', 'contact', 'email', 'phone', 'notes')
+    form_args = {
+        'phone': {
+            'validators': [
+                validators.InputRequired(
+                    message='联系电话必须为11位数字。'
+                ),
+                validators.Regexp(
+                    r'^[0-9]{11}$',
+                    message='联系电话必须为11位数字。'
+                )
+            ]
+        }
+    }
+    form_widget_args = {
+        'phone': {
+            'maxlength': 11,
+            'inputmode': 'numeric'
+        }
+    }
     action_disallowed_list = ['delete']
     column_exclude_list = ['notes']
     form_excluded_columns = ['suppliers']
@@ -624,15 +643,34 @@ class AnalyticsView(BaseView):
     @expose('/')
     def index(self):
         now = datetime.datetime.now()
+        selected_date = now.date()
+        requested_date = request.args.get('date')
+        date_error = None
+        if requested_date:
+            try:
+                selected_date = datetime.datetime.strptime(
+                    requested_date, '%Y-%m-%d'
+                ).date()
+            except ValueError:
+                date_error = '日期无效，请选择有效日期。'
+
+        start_dt = datetime.datetime.combine(
+            selected_date, datetime.time.min
+        )
+        end_dt = datetime.datetime.combine(
+            selected_date, datetime.time.max
+        )
         summary = sales_summary(
-            start_dt=now.replace(hour=0, minute=0, second=0, microsecond=0),
-            end_dt=now
+            start_dt=start_dt,
+            end_dt=end_dt
         )
         return self.render(
             'pages/analytics.html',
             summaryChartData=json.dumps(summary),
             gross_sales="¥{:,.2f}".format(summary['gross_sales']),
-            profits="¥{:,.2f}".format(summary['profits'])
+            profits="¥{:,.2f}".format(summary['profits']),
+            selected_date=selected_date.isoformat(),
+            date_error=date_error
         )
 
 # ----------------------------------------------------------------------------
