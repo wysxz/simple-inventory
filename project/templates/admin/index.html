@@ -1,32 +1,31 @@
 {% extends 'admin/master.html' %} {% block body %} {{ super() }}
 <div class="jumbotron">
-    <h1>{{ config['ORG_NAME'] }}</h1>
-    <h1><small>{{ config['APP_TITLE'] }}</small></h1>
+    <h1>{{ config['APP_TITLE'] }}</h1>
     <hr>
     <p>{{ config['APP_DESC'] }}</p>
 </div>
-<div class="row">
+<div class="row home-actions">
     <div class="col-md-6">
         <a class="btn btn-primary btn-lg btn-block" href="/admin/sale/new/?url=%2Fadmin%2Fsale%2F" role="button">
-            <h4><span class="glyphicon glyphicon-usd" aria-hidden="true"></span>&nbsp;&nbsp;Record a Sale</h4>
+            <h4>登记销售</h4>
         </a>
     </div>
     <div class="col-md-6">
         <a class="btn btn-default btn-lg btn-block" href="{{url_for('analytics.index')}}" role="button">
-            <h4><span class="glyphicon glyphicon-usd" aria-hidden="true"></span>&nbsp;&nbsp;View Sales History</h4>
+            <h4>查看销售记录</h4>
         </a>
     </div>
 </div>
 <hr>
-<div class="row">
+<div class="row home-quicklinks">
     <div class="col-md-6">
         <a class="btn btn-default btn-block" href="/admin/supplier/" role="button">
-            <span class="glyphicon glyphicon-th-large" aria-hidden="true"></span>&nbsp;&nbsp;Manage Suppliers
+            <span class="glyphicon glyphicon-th-large" aria-hidden="true"></span>&nbsp;&nbsp;管理供应商
         </a>
     </div>
     <div class="col-md-6">
         <a class="btn btn-default btn-block" href="/admin/product/" role="button">
-            <span class="glyphicon glyphicon-th" aria-hidden="true"></span>&nbsp;&nbsp;Manage Products
+            <span class="glyphicon glyphicon-th" aria-hidden="true"></span>&nbsp;&nbsp;管理商品
         </a>
     </div>
 </div>

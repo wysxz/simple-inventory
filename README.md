@@ -43,11 +43,37 @@ To develop this project:
 
     pip install -r requirements.txt
     
-4.  Create the database (initial set-up only)
+4.  Copy the example configuration (edit `ORG_NAME` to set the organization name):
+
+    ```ps
+    copy project\config.example.py project\config.py
+    ```
+
+    The application interface is configured for Simplified Chinese by default.
+    Before starting, set `LOGIN_USERNAME` and `LOGIN_PASSWORD_HASH` in
+    `project/config.py`. Generate a password hash with:
+
+    ```ps
+    python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-password'))"
+    ```
+
+    Add the generated hash and your chosen account to `project/config.py`:
+
+    ```python
+    LOGIN_USERNAME = 'admin'
+    LOGIN_PASSWORD_HASH = 'paste-the-generated-hash-here'
+    ```
+
+    Set `SECRET_KEY` in `project/config.py` to a persistent random value (for example,
+    generate one with `python -c "import secrets; print(secrets.token_hex(32))"`).
+    Without this, the app generates one at startup and the login session expires
+    whenever the app restarts.
+
+5.  Create the database (initial set-up only)
 
     `python db_setup.py`
 
-5.  Run the application:
+6.  Run the application:
 
     Using the Flask development server, in browser: `python run.py`
     
@@ -56,7 +82,7 @@ To develop this project:
 
 # Deployment (and Disclaimer)
 
-My use case is absurdly simple and probably not useful for most folks: for me this needs to run on one computer used by a couple of people and give the appeareance of a desktop application. It is not exposed to the internet, and so lacks any security features in that regard (logins, protection from CSRF, etc). 
+My use case is absurdly simple and probably not useful for most folks: for me this needs to run on one computer used by a couple of people and give the appearance of a desktop application. The app now requires a configured account and password to access its pages, but it does not include CSRF protection and is not intended to be exposed to the internet.
 
 [PyWebView](https://github.com/r0x0r/pywebview) does the trick of making this run as a desktop application.
 

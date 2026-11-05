@@ -7,16 +7,19 @@ import os
 import time
 import sqlite3
 import logging
-import operator
 import json
 import datetime
-from flask import Flask, redirect, render_template, url_for
+import hmac
+from urllib.parse import urlsplit
+from flask import Flask, flash, redirect, render_template, request, session, url_for
 from flask_sqlalchemy import SQLAlchemy
+from flask_babelex import Babel
 from sqlalchemy.schema import FetchedValue
 from jinja2 import Markup
 from wtforms import validators
 import petl as etl
 from dateutil.parser import parse
+from werkzeug.security import check_password_hash
 
 import flask_admin as admin
 from flask_admin.contrib import sqla
@@ -24,6 +27,7 @@ from flask_admin.contrib.sqla import filters
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.form import rules
 from flask_admin import BaseView, expose
+from .sale_price import ensure_sold_price_triggers
 
 # ----------------------------------------------------------------------------
 # Application Setup
@@ -32,6 +36,18 @@ from flask_admin import BaseView, expose
 # Create application
 app = Flask(__name__)
 app.config.from_pyfile('config.py')
+if app.config.get('SECRET_KEY') == '123456790':
+    app.config['SECRET_KEY'] = (
+        os.environ.get('INVENTORY_SECRET_KEY') or os.urandom(32)
+    )
+app.config.setdefault(
+    'LOGIN_USERNAME', os.environ.get('INVENTORY_LOGIN_USERNAME', '')
+)
+app.config.setdefault(
+    'LOGIN_PASSWORD_HASH',
+    os.environ.get('INVENTORY_LOGIN_PASSWORD_HASH', '')
+)
+babel = Babel(app)
 db = SQLAlchemy(app)
 
 # setup logging for SQLAlchemy
@@ -49,9 +65,9 @@ def format_currency(view, context, model, name):
     v = model.__dict__[name]
     # print(v)
     if v is not None:
-        return Markup("${:,.2f}".format(v))
+        return Markup("¥{:,.2f}".format(v))
     else:
-        return Markup("$---")
+        return Markup("¥---")
 
 
 def format_date(date_string, strf_string='%Y-%m-%d', replace_nonetype_with="00-00-0000"):
@@ -59,8 +75,16 @@ def format_date(date_string, strf_string='%Y-%m-%d', replace_nonetype_with="00-0
     #     print(date_string, type(date_string))
     #     return replace_nonetype_with
     # else:
-    dt = parse(date_string)
+    dt = date_string if isinstance(date_string, datetime.datetime) else parse(date_string)
     return dt.strftime(strf_string)
+
+
+def parse_datetime(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime.datetime):
+        return value
+    return parse(value)
 
 
 def calculate_profit(rec, assume_quantity=1):
@@ -138,50 +162,18 @@ def handle_none(v, replace_with=1):
 def export_data(table):
     dir_path = os.path.dirname(os.path.realpath(__file__))
     print(dir_path)
-    outpath = os.path.join(dir_path, 'static', 'data', "sales.csv")
+    data_dir = os.path.join(dir_path, 'static', 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    outpath = os.path.join(data_dir, "sales.csv")
 
     etl.tocsv(table, outpath)
 
 
 def sales_summary(start_dt=None, end_dt=None, staff_id=None, for_export=False):
-    """tally up gross (sale over list) profits
-    TODO: tally up net profites (gross profit vs inventory purchase total)
-
-    TODO: Keyword Arguments:
-        start_dt {[type]} -- datetime for start of query (default: {None})
-        end_dt {[type]} -- datetime for start of query [description] (default: {None})
-
-    Returns:
-        [dict] -- various types of sales information, stored in a dictionary.
-    """
-
-    # products = db.session.query(Product).all()
-    # sales = db.session.query(Sale).all()
-
     # retrieve existing tables
     products_records = etl.fromdb(db.engine, 'SELECT * FROM product')
     sales_records = etl.fromdb(db.engine, 'SELECT * FROM sale')
     staff_records = etl.fromdb(db.engine, 'SELECT * FROM staff')
-    
-    # filter by start/end date if provided
-    if start_dt and end_dt:
-        sales_records = etl\
-            .selectnotnone(sales_records, 'date')\
-            .select(lambda r: r.date > start_dt and r.date <= end_dt)
-    elif start_dt and not end_dt:
-        sales_records = etl\
-            .selectnotnone(sales_records, 'date')\
-            .select(lambda r: r.date > start_dt)
-    elif end_dt and not start_dt:
-        sales_records = etl\
-            .selectnotnone(sales_records, 'date')\
-            .select(lambda r: r.date <= end_dt)
-    else:
-        pass
-    
-    # filter by staff id if provided
-    if staff_id:
-        sales_records = etl.select(sales_records, 'staff_id', lambda v: v == staff_id)
 
     # join product info to sales data
     sales_data = etl\
@@ -200,66 +192,97 @@ def sales_summary(start_dt=None, end_dt=None, staff_id=None, for_export=False):
 
     # prep joined sales data for tabulation
     sales_data = etl\
-        .convert(sales_data, 'date', lambda dt: format_date(dt))\
+        .convert(
+            sales_data,
+            'date',
+            lambda dt: format_date(dt, '%Y-%m-%d %H:%M:%S.%f') if dt else None
+        )\
         .sort('date')\
         .convert('quantity', lambda q: handle_none(q, replace_with=1))\
         .addfield('profit', lambda rec: calculate_profit(rec))\
         .addfield('gross_sales', lambda rec: calculate_gross_sales(rec))
-        
-    # tabulate some figures
+
+    if not for_export:
+        export_data(sales_data)
+
+    if start_dt is not None:
+        sales_data = etl.select(
+            sales_data,
+            'date',
+            lambda value: value is not None and parse_datetime(value) >= start_dt
+        )
+    if end_dt is not None:
+        sales_data = etl.select(
+            sales_data,
+            'date',
+            lambda value: value is not None and parse_datetime(value) <= end_dt
+        )
+    if staff_id:
+        sales_data = etl.select(sales_data, 'staff_id', lambda value: value == staff_id)
+
+    chart_end = end_dt or datetime.datetime.now()
+    if start_dt is not None:
+        chart_start = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        bucket_count = 24
+    else:
+        chart_start = chart_end - datetime.timedelta(hours=24)
+        bucket_count = 24
+    chart_hours = [
+        chart_start + datetime.timedelta(hours=index)
+        for index in range(bucket_count)
+    ]
+    hourly_summary = {
+        hour.strftime('%Y-%m-%dT%H:%M:%S'): {
+            'gross_sales': 0, 'profits': 0, 'count': 0
+        }
+        for hour in chart_hours
+    }
+
     gross_sales = 0
     profits = 0
     for sale in etl.dicts(sales_data):
-        profits += calculate_profit(sale)
-        gross_sales += calculate_gross_sales(sale)
+        sale_profit = calculate_profit(sale)
+        sale_gross = calculate_gross_sales(sale)
+        profits += sale_profit
+        gross_sales += sale_gross
+        if sale['date'] is not None:
+            sale_dt = parse_datetime(sale['date'])
+            bucket_index = int((sale_dt - chart_start).total_seconds() // 3600)
+            if bucket_index == bucket_count and sale_dt == chart_end:
+                bucket_index = bucket_count - 1
+            if not 0 <= bucket_index < bucket_count:
+                continue
+            label = chart_hours[bucket_index].strftime('%Y-%m-%dT%H:%M:%S')
+            bucket = hourly_summary[label]
+            bucket['gross_sales'] += sale_gross
+            bucket['profits'] += sale_profit
+            bucket['count'] += 1
 
     if for_export:
         return {
             'gross_sales': gross_sales,
-            'profits': profits, 
+            'profits': profits,
             'table': sales_data
-        }       
+        }
 
-    export_data(sales_data)
-
-    # summarize data into charting-friendly data structures
-    chart_count, chart_count_missing_date = etl\
-        .fold(sales_data, 'date', operator.add, 'quantity', presorted=True)\
-        .rename({'key': 'x', 'value': 'y'})\
-        .biselect(lambda rec: rec.x is not None)
-        
-    # print(chart_count)
-    # etl.lookall(chart_count)
-
-    chart_gross, chart_gross_missing_date = etl\
-        .fold(sales_data, 'date', operator.add,'gross_sales', presorted=True)\
-        .rename({'key': 'x', 'value': 'y'})\
-        .biselect(lambda rec: rec.x is not None)
-
-    # print(chart_gross)
-    # etl.lookall(chart_gross)
-
-    chart_profit, chart_profit_missing_date = etl\
-        .fold(sales_data, 'date', operator.add, 'profit', presorted=True)\
-        .rename({'key': 'x', 'value': 'y'})\
-        .biselect(lambda rec: rec.x is not None)
-
-
-
-    # for i in etl.dicts(chart_count):
-    #     print(i)
-    # for i in etl.dicts(chart_gross):
-    #     print(i)
-    
     return {
         'gross_sales': gross_sales,
         'profits': profits,
-        'chart_gross': list(etl.dicts(chart_gross)),
-        'chart_gross_missing_date': list(etl.dicts(chart_gross_missing_date)),
-        'chart_profit': list(etl.dicts(chart_profit)),
-        'chart_profit_missing_date': list(etl.dicts(chart_profit_missing_date)),
-        'chart_count': list(etl.dicts(chart_count)),
-        'chart_count_missing_date': list(etl.dicts(chart_count_missing_date))
+        'chart_gross': [
+            {'x': label, 'y': bucket['gross_sales']}
+            for label, bucket in hourly_summary.items()
+        ],
+        'chart_profit': [
+            {'x': label, 'y': bucket['profits']}
+            for label, bucket in hourly_summary.items()
+        ],
+        'chart_count': [
+            {'x': label, 'y': bucket['count']}
+            for label, bucket in hourly_summary.items()
+        ],
+        'chart_gross_missing_date': [],
+        'chart_profit_missing_date': [],
+        'chart_count_missing_date': []
     }
 
 
@@ -280,6 +303,14 @@ class Supplier(db.Model):
 
 
 class SupplierView(ModelView):
+    column_labels = {
+        'id': '编号',
+        'name': '供应商名称',
+        'contact': '联系人',
+        'email': '电子邮箱',
+        'phone': '联系电话',
+        'notes': '备注',
+    }
     column_searchable_list = ('name', 'contact', 'email', 'phone', 'notes')
     action_disallowed_list = ['delete']
     column_exclude_list = ['notes']
@@ -326,10 +357,25 @@ class Product(db.Model):
     tags = db.relationship('Tag', secondary=product_tags_table)
 
     def __str__(self):
-        return self.fullname
+        return (self.fullname or self.name or "商品 {}".format(self.id)).replace("$", "¥")
 
 
 class ProductView(ModelView):
+    column_labels = {
+        'id': '编号',
+        'code': '商品编码',
+        'name': '商品名称',
+        'quantity_per_unit': '每单位数量',
+        'list_price': '进价',
+        'selling_price': '销售价',
+        'description': '商品描述',
+        'discontinued': '已停用',
+        'supplier': '供应商',
+        'supplier_id': '供应商',
+        'fullname': '商品信息',
+        'initial_volume': '初始库存',
+        'tags': '分类',
+    }
     column_formatters = {
         'list_price': format_currency,
         'selling_price': format_currency
@@ -415,11 +461,19 @@ class Staff(db.Model):
         return self.name
 
 
-'''
+class TagView(ModelView):
+    column_labels = {
+        'id': '编号',
+        'name': '分类名称',
+    }
+
+
 class StaffView(ModelView):
-    column_searchable_list = ('name')
-    action_disallowed_list = ['delete']
-'''
+    column_labels = {
+        'id': '编号',
+        'name': '员工姓名',
+    }
+    form_excluded_columns = ('staff',)
 
 
 class Sale(db.Model):
@@ -440,6 +494,19 @@ class Sale(db.Model):
 
 
 class SaleView(ModelView):
+    column_labels = {
+        'id': '编号',
+        'quantity': '数量',
+        'date': '销售日期',
+        'special_price': '特价',
+        'use_list_price': '按进价销售',
+        'notes': '备注',
+        'product': '商品',
+        'product_id': '商品',
+        'staff': '经手员工',
+        'staff_id': '经手员工',
+        'sold_price': '成交单价',
+    }
     column_formatters = {
         'special_price': format_currency,
         'sold_price': format_currency
@@ -451,6 +518,14 @@ class SaleView(ModelView):
     can_export = True
 
 
+class StockReceipt(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey(Product.id), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    received_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.now)
+    notes = db.Column(db.Text)
+
+
 # ----------------------------------------------------------------------------
 # Custom view classes (uses Flask-Admin template but not derived from table)
 # ----------------------------------------------------------------------------
@@ -458,22 +533,106 @@ class SaleView(ModelView):
 class InventoryView(BaseView):
     @expose('/')
     def index(self):
-        return self.render('pages/inventory.html')
+        db.create_all()
+
+        sales_totals = dict(
+            db.session.query(
+                Sale.product_id,
+                db.func.sum(db.func.coalesce(Sale.quantity, 1))
+            ).group_by(Sale.product_id).all()
+        )
+        receipt_totals = dict(
+            db.session.query(
+                StockReceipt.product_id,
+                db.func.sum(StockReceipt.quantity)
+            ).group_by(StockReceipt.product_id).all()
+        )
+
+        products = Product.query.order_by(Product.name.asc()).all()
+        inventory = []
+        for product in products:
+            opening = product.initial_volume or 0
+            sold = sales_totals.get(product.id, 0) or 0
+            received = receipt_totals.get(product.id, 0) or 0
+            on_hand = opening + received - sold
+            status = (
+                '已停用' if product.discontinued else
+                '需要补货' if on_hand <= 5 else
+                '库存不足' if on_hand <= 10 else
+                '库存充足'
+            )
+            inventory.append({
+                'product': product,
+                'opening': opening,
+                'sold': sold,
+                'received': received,
+                'on_hand': on_hand,
+                'status': status
+            })
+
+        low_stock = [
+            item for item in inventory
+            if not item['product'].discontinued and item['on_hand'] <= 10
+        ]
+        restock_needed = [
+            item for item in inventory
+            if not item['product'].discontinued and item['on_hand'] <= 5
+        ]
+        return self.render(
+            'pages/inventory.html',
+            inventory=inventory,
+            low_stock=low_stock,
+            restock_needed=restock_needed,
+            active_products=[
+                item['product'] for item in inventory
+                if not item['product'].discontinued
+            ],
+            total_products=len(products),
+            total_units=sum(max(item['on_hand'], 0) for item in inventory),
+            low_stock_count=len(low_stock),
+            restock_count=len(restock_needed)
+        )
+
+    @expose('/receive/', methods=('POST',))
+    def receive(self):
+        db.create_all()
+        product_id = request.form.get('product_id', type=int)
+        try:
+            quantity = int(request.form.get('quantity', ''))
+        except (TypeError, ValueError):
+            quantity = 0
+
+        product = Product.query.filter_by(id=product_id).first()
+        if product is None or product.discontinued:
+            flash('请选择有效且未停用的商品。', 'error')
+        elif quantity <= 0:
+            flash('补货数量必须是大于 0 的整数。', 'error')
+        else:
+            receipt = StockReceipt(
+                product_id=product.id,
+                quantity=quantity,
+                notes=(request.form.get('notes') or '').strip() or None
+            )
+            db.session.add(receipt)
+            db.session.commit()
+            flash('已登记 {} 件商品“{}”入库。'.format(quantity, product.name), 'success')
+
+        return redirect(self.get_url('.index'))
 
 
 class AnalyticsView(BaseView):
     @expose('/')
     def index(self):
-        summary = sales_summary()
-        print(summary['chart_gross_missing_date'])
+        now = datetime.datetime.now()
+        summary = sales_summary(
+            start_dt=now.replace(hour=0, minute=0, second=0, microsecond=0),
+            end_dt=now
+        )
         return self.render(
             'pages/analytics.html',
             summaryChartData=json.dumps(summary),
-            gross_sales="${:,.2f}".format(summary['gross_sales']),
-            profits="${:,.2f}".format(summary['profits']),
-            chart_gross_missing_date=summary['chart_gross_missing_date'][0]['y'],
-            chart_profit_missing_date=summary['chart_profit_missing_date'][0]['y'],
-            chart_count_missing_date=summary['chart_count_missing_date'][0]['y']
+            gross_sales="¥{:,.2f}".format(summary['gross_sales']),
+            profits="¥{:,.2f}".format(summary['profits'])
         )
 
 # ----------------------------------------------------------------------------
@@ -481,6 +640,74 @@ class AnalyticsView(BaseView):
 # ----------------------------------------------------------------------------
 
 # root route
+
+
+def safe_next_url(target):
+    if not target:
+        return url_for('index')
+
+    parsed = urlsplit(target)
+    if (parsed.scheme or parsed.netloc or not parsed.path.startswith('/') or
+            parsed.path.startswith('//') or '\\' in parsed.path):
+        return url_for('index')
+    return target
+
+
+@app.before_request
+def require_login():
+    if request.endpoint in ('login', 'static'):
+        return None
+    if not session.get('authenticated'):
+        return redirect(url_for('login', next=request.full_path))
+    return None
+
+
+@app.before_first_request
+def initialize_sold_prices():
+    database_path = db.engine.url.database
+    if not database_path:
+        raise RuntimeError('The SQLite database path is not configured.')
+    ensure_sold_price_triggers(database_path)
+
+
+@app.route('/login', methods=('GET', 'POST'))
+def login():
+    next_url = safe_next_url(request.values.get('next'))
+    username = app.config.get('LOGIN_USERNAME', '')
+    password_hash = app.config.get('LOGIN_PASSWORD_HASH', '')
+    login_configured = bool(username and password_hash)
+    error = None
+
+    if session.get('authenticated'):
+        return redirect(next_url)
+
+    if request.method == 'POST':
+        submitted_username = request.form.get('username', '')
+        submitted_password = request.form.get('password', '')
+        if not login_configured:
+            error = '请先在配置文件中设置登录账号和密码哈希。'
+        elif (hmac.compare_digest(
+                submitted_username.encode('utf-8'),
+                username.encode('utf-8')
+        ) and check_password_hash(password_hash, submitted_password)):
+            session.clear()
+            session['authenticated'] = True
+            return redirect(next_url)
+        else:
+            error = '账号或密码错误。'
+
+    return render_template(
+        'pages/login.html',
+        error=error,
+        next_url=next_url,
+        login_configured=login_configured
+    )
+
+
+@app.route('/logout', methods=('POST',))
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 
 @app.route('/')
@@ -493,16 +720,17 @@ def index():
 # Create admin
 admin = admin.Admin(
     app,
-    name="{0} | {1}".format(app.config['ORG_NAME'], app.config['APP_TITLE']),
+    name=app.config['APP_TITLE'],
+    index_view=admin.AdminIndexView(name='首页'),
     template_mode='bootstrap3'
 )
 
 # Add model views
-admin.add_view(SaleView(Sale, db.session))
-admin.add_view(SupplierView(Supplier, db.session))
-admin.add_view(ProductView(Product, db.session))
-admin.add_view(ModelView(Tag, db.session))
-admin.add_view(ModelView(Staff, db.session))
+admin.add_view(SaleView(Sale, db.session, name='销售记录'))
+admin.add_view(SupplierView(Supplier, db.session, name='供应商'))
+admin.add_view(ProductView(Product, db.session, name='商品'))
+admin.add_view(TagView(Tag, db.session, name='商品分类'))
+admin.add_view(StaffView(Staff, db.session, name='员工'))
 # add custom views
-admin.add_view(InventoryView(name='Inventory', endpoint='inventory'))
-admin.add_view(AnalyticsView(name='Analytics', endpoint='analytics'))
+admin.add_view(InventoryView(name='库存', endpoint='inventory'))
+admin.add_view(AnalyticsView(name='销售统计', endpoint='analytics'))

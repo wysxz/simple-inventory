@@ -1,1 +1,15 @@
 {% extends admin_base_template %}
+{% block head_css %}
+    {{ super() }}
+    <link href="{{ url_for('static', filename='css/app-theme.css', v='20261105') }}" rel="stylesheet">
+{% endblock %}
+{% block menu_links %}
+    <ul class="nav navbar-nav navbar-right">
+        {{ layout.menu_links() }}
+        <li>
+            <form action="{{ url_for('logout') }}" method="post" class="navbar-form">
+                <button class="btn btn-link" type="submit">退出登录</button>
+            </form>
+        </li>
+    </ul>
+{% endblock %}

@@ -1,11 +1,11 @@
 {% extends 'admin/master.html' %}
 <!-- Title -->
-{% block title %}Sales Summary{% endblock %}
+{% block title %}销售统计{% endblock %}
 <!-- block -->
 {% block body %}
 <div class="row">
     <div class="col-md-6">
-        <h1>Sales Summary</h1>
+        <h1>销售统计</h1>
     </div>
 </div>
 <div class="row">
@@ -13,7 +13,7 @@
 
         <div class="row">
             <div class="col-sm-4">
-                <h2><small>Gross sales:</small></h2>
+                <h2><small>今日销售总额：</small></h2>
             </div>
             <div class="col-sm-8">
                 <h2>{{gross_sales}}</h2>
@@ -21,7 +21,7 @@
         </div>
         <div class="row">
             <div class="col-sm-4">
-                <h2><small>Profits: </small></h2>
+                <h2><small>今日毛利润：</small></h2>
             </div>
             <div class="col-sm-8">
                 <h2>{{profits}}</h2>
@@ -29,28 +29,26 @@
         </div>
     </div>
     <div class="col-md-5">
-        <p><em>Coming Soon: view sales over time periods (e.g., last year, last month, past 6 months, etc.), best-sellers, and most-profitable products. Charts will be interactive, with temporal cross-filtering.</em></p>
+        <p><em>统计范围：今日 00:00 至现在，按 24 小时汇总。金额单位：人民币。</em></p>
     </div>
 </div>
 <hr>
 <div class="row">
     <div class="col-md-12">
-        <h2>Sales per Day</h2>
+        <h2>今日销售额（按小时）</h2>
         <canvas id="summarySalesChart" width="300" height="100"></canvas>
-        <p>${{chart_gross_missing_date}} worth of transactions without a date</p>
     </div>
 </div>
 <div class="row">
     <div class="col-md-12">
-        <h2>Transactions Per Day</h2>
+        <h2>今日交易笔数（按小时）</h2>
         <canvas id="summaryCountChart" width="300" height="100"></canvas>
-        <p>{{chart_count_missing_date}} transactions without a date</p>
     </div>
 </div>
 <hr>
 <div class="row">
     <div class="col-md-12">
-        <p><a href="{{url_for('static', filename='data/sales.csv')}}">Download this data</a></p>
+        <p><a href="{{url_for('static', filename='data/sales.csv')}}">下载销售数据</a></p>
     </div>
 </div>
 

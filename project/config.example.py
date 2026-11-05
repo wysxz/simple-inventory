@@ -1,16 +1,24 @@
-# Application Properties
-ORG_NAME = 'Name of Organization Chiropractic'
-APP_TITLE = 'Sales & Inventory DB'
-APP_DESC = 'An extremely simple way to track the sales and inventory of things.'
+import os
 
-# Create dummy secrey key so we can use sessions
-SECRET_KEY = '123456790'
+# Application Properties
+ORG_NAME = '商品库存销售管理系统'
+APP_TITLE = '商品库存销售管理系统'
+APP_DESC = '用于管理商品库存、供应商、销售记录和销售统计。'
+
+# Set INVENTORY_SECRET_KEY to a persistent random value for deployments.
+SECRET_KEY = os.environ.get('INVENTORY_SECRET_KEY') or os.urandom(32)
+
+# Generate a hash with:
+# python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-password'))"
+LOGIN_USERNAME = os.environ.get('INVENTORY_LOGIN_USERNAME', '')
+LOGIN_PASSWORD_HASH = os.environ.get('INVENTORY_LOGIN_PASSWORD_HASH', '')
 
 # Flask-Admin config
 DEBUG = False
-HOST = 'localhost'
+HOST = '127.0.0.1'
 PORT = 5000
 FLASK_ADMIN_SWATCH = "readable"
+BABEL_DEFAULT_LOCALE = 'zh_Hans_CN'
 
 # database
 DATABASE_FILE = 'inventory_0.1.0.sqlite'

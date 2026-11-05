@@ -15,6 +15,7 @@ ENV/
 sources/
 backup/
 project/test.db
+project/static/data/sales.csv
 
 # komodo project stuff
 .komodotools

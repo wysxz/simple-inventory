@@ -9,6 +9,7 @@ autopep8 = "*"
 
 [packages]
 click = "==6.7"
+flask-babelex = "==0.9.4"
 itsdangerous = "==0.24"
 petl = "==1.1.1"
 Flask = "==0.12.2"
@@ -19,7 +20,7 @@ MarkupSafe = "==1.0"
 SQLAlchemy = "==1.1.11"
 Werkzeug = "==0.12.2"
 WTForms = "==2.1"
-python-dateutil = "*"
+python-dateutil = "==2.9.0.post0"
 
 [requires]
 python_version = "3.7"
